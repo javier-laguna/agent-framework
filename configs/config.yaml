@@ -1,0 +1,13 @@
+# Ejemplo: OpenAI. Copiar a configs/config.yaml para usar.
+# Definir OPENAI_API_KEY en .env o en el entorno.
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  temperature: 0.0
+  max_tokens: 1024
+
+conversation:
+  enabled: true
+  max_messages: 2
+  trim_when_over: 3
+  summary_type: facts
