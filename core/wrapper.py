@@ -7,7 +7,12 @@ import dspy
 from adapters.llm.base import BaseLLMAdapter
 from adapters.llm.gemini import GeminiAdapter
 from adapters.llm.openai import OpenAIAdapter
-from core.config import load_config, load_conversation_config
+from core.config import (
+    load_agent_description,
+    load_config,
+    load_conversation_config,
+    load_tools_config,
+)
 from core.conversation import ConversationMemory
 
 
@@ -20,15 +25,9 @@ class DSPyWrapper:
         adapter: BaseLLMAdapter | None = None,
         memory: ConversationMemory | None = None,
     ):
-        """Carga config, obtiene el LM del adapter y configura DSPy.
-
-        Args:
-            config_path: Ruta al YAML. Si es None, usa configs/config.yaml.
-            adapter: Adaptador que construye el LM. Si es None, se elige por config.provider (openai | gemini).
-            memory: Memoria de conversación opcional. Si es None y conversation.enabled en config, se crea una internamente.
-        """
         path = config_path or None
         self._config = load_config(path)
+        self._agent_description = load_agent_description(path)
         if adapter is not None:
             self._adapter = adapter
         elif self._config.provider == "gemini":
@@ -40,21 +39,58 @@ class DSPyWrapper:
 
         conv_config = load_conversation_config(path)
         _summary_type = (conv_config.summary_type or "facts").lower()
+
+        tools_config = load_tools_config(path)
+        self._tools: list = []
+        self._tools_enabled = False
+        self._max_iters = tools_config.max_iters
+
+        if tools_config.enabled and tools_config.available:
+            self._tools = self._load_tools(tools_config.available)
+            self._tools_enabled = bool(self._tools)
+
+        has_context = False
         if memory is not None:
             self._memory: ConversationMemory | None = memory
             self._summary_type = _summary_type
-            self._predict = dspy.Predict("context, question -> answer")
+            has_context = True
             self._predict_summary = self._make_summary_predictor(_summary_type)
         elif conv_config.enabled:
             self._memory = ConversationMemory(conv_config)
             self._summary_type = _summary_type
-            self._predict = dspy.Predict("context, question -> answer")
+            has_context = True
             self._predict_summary = self._make_summary_predictor(_summary_type)
         else:
             self._memory = None
             self._summary_type = ""
-            self._predict = dspy.Predict("question -> answer")
             self._predict_summary = None
+
+        sig_str = "context, question -> answer" if has_context else "question -> answer"
+        self._predict = self._make_main_module(sig_str)
+
+    def _load_tools(self, names: list[str]) -> list:
+        """Importa los módulos de tools para que se registren y devuelve las funciones."""
+        import importlib
+
+        for name in names:
+            try:
+                importlib.import_module(f"tools.{name}")
+            except ModuleNotFoundError:
+                pass
+
+        from tools.registry import get_tools
+        return get_tools(names)
+
+    def _make_main_module(self, signature_str: str):
+        """Crea el módulo principal: ReAct si hay tools, Predict si no."""
+        if self._agent_description:
+            sig = dspy.Signature(signature_str, self._agent_description)
+        else:
+            sig = signature_str
+
+        if self._tools_enabled:
+            return dspy.ReAct(sig, tools=self._tools, max_iters=self._max_iters)
+        return dspy.Predict(sig)
 
     def _make_summary_predictor(self, summary_type: str) -> dspy.Predict:
         """Crea el predictor de resumen (solo tipo facts)."""
@@ -69,7 +105,7 @@ class DSPyWrapper:
         return dspy.Predict(facts_sig)
 
     def _summarize_chunk(self, text: str) -> str:
-        """Genera resumen del bloque (incluye resumen n-1 si existe) y devuelve un único facts_summary."""
+        """Genera resumen del bloque y devuelve un único facts_summary."""
         if not text.strip() or self._predict_summary is None:
             return ""
         pred = self._predict_summary(conversation_text=text)
@@ -78,13 +114,8 @@ class DSPyWrapper:
     def respond(self, texto: str) -> str:
         """Envía el texto al modelo configurado y devuelve la respuesta.
 
-        Si la memoria de conversación está habilitada, usa contexto previo y actualiza el historial.
-
-        Args:
-            texto: Entrada (pregunta o mensaje) a enviar al LLM.
-
-        Returns:
-            Respuesta generada por el modelo.
+        Si hay tools habilitadas, usa ReAct para que el modelo decida si las invoca.
+        Si la memoria de conversación está habilitada, usa contexto previo.
         """
         if self._memory is None:
             pred = self._predict(question=texto)
@@ -100,6 +131,14 @@ class DSPyWrapper:
     def has_conversation(self) -> bool:
         """Indica si el wrapper usa memoria de conversación."""
         return self._memory is not None
+
+    def has_tools(self) -> bool:
+        """Indica si el wrapper tiene tools habilitadas."""
+        return self._tools_enabled
+
+    def get_tool_names(self) -> list[str]:
+        """Devuelve los nombres de las tools activas."""
+        return [fn.__name__ for fn in self._tools]
 
     def get_conversation_messages(self) -> list[dict[str, str]]:
         """Mensajes recientes para mostrar en UI (vacío si no hay memoria)."""

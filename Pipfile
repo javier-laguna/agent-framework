@@ -6,6 +6,9 @@ name = "pypi"
 [packages]
 dspy = "*"
 streamlit = "*"
+chromadb = "*"
+pypdf = "*"
+python-docx = "*"
 
 [requires]
 python_version = "3.10"

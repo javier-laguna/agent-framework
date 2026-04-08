@@ -1,7 +1,7 @@
 """Carga de configuración desde YAML y variables de entorno."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -32,12 +32,90 @@ class ConversationConfig:
     summary_type: str = "facts"
 
 
+@dataclass
+class VectorizerConfig:
+    """Configuración del vectorizador y almacén vectorial."""
+
+    enabled: bool = False
+    embedding_model: str = "all-MiniLM-L6-v2"
+    collection_name: str = "documents"
+    persist_directory: str = "./data/chroma"
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+    top_k: int = 5
+
+
+@dataclass
+class ToolsConfig:
+    """Configuración de herramientas (tools) del agente."""
+
+    enabled: bool = False
+    available: list[str] = field(default_factory=list)
+    max_iters: int = 5
+
+
 def _load_yaml(path: Path) -> dict:
     """Carga el YAML y devuelve un diccionario; vacío si no existe."""
     if not path.exists():
         return {}
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def load_agent_description(config_path: Path | None = None) -> str:
+    """Carga la descripción del agente (system prompt) desde el YAML.
+
+    Lee la sección 'agent.description'. Si no existe, devuelve cadena vacía.
+    """
+    path = config_path or _DEFAULT_CONFIG_PATH
+    data = _load_yaml(path)
+    agent = data.get("agent") or {}
+    return str(agent.get("description", "")).strip()
+
+
+def load_vectorizer_config(config_path: Path | None = None) -> VectorizerConfig:
+    """Carga la sección vectorizer del YAML.
+
+    Args:
+        config_path: Ruta al YAML. Si es None, usa configs/config.yaml.
+
+    Returns:
+        VectorizerConfig. Si no existe la sección, enabled=False y valores por defecto.
+    """
+    path = config_path or _DEFAULT_CONFIG_PATH
+    data = _load_yaml(path)
+    vec = data.get("vectorizer") or {}
+    return VectorizerConfig(
+        enabled=bool(vec.get("enabled", False)),
+        embedding_model=str(vec.get("embedding_model", "all-MiniLM-L6-v2")),
+        collection_name=str(vec.get("collection_name", "documents")),
+        persist_directory=str(vec.get("persist_directory", "./data/chroma")),
+        chunk_size=int(vec.get("chunk_size", 500)),
+        chunk_overlap=int(vec.get("chunk_overlap", 50)),
+        top_k=int(vec.get("top_k", 5)),
+    )
+
+
+def load_tools_config(config_path: Path | None = None) -> ToolsConfig:
+    """Carga la sección tools del YAML.
+
+    Args:
+        config_path: Ruta al YAML. Si es None, usa configs/config.yaml.
+
+    Returns:
+        ToolsConfig. Si no existe la sección, enabled=False y lista vacía.
+    """
+    path = config_path or _DEFAULT_CONFIG_PATH
+    data = _load_yaml(path)
+    tools = data.get("tools") or {}
+    available = tools.get("available") or []
+    if isinstance(available, str):
+        available = [available]
+    return ToolsConfig(
+        enabled=bool(tools.get("enabled", False)),
+        available=[str(t).strip() for t in available if t],
+        max_iters=int(tools.get("max_iters", 5)),
+    )
 
 
 def load_conversation_config(config_path: Path | None = None) -> ConversationConfig:

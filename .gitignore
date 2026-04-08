@@ -1,8 +1,10 @@
 .env
 docs/
+rag_docs/
 .venv/
 __pycache__/
 *.pyc
 *.pyo
 .Python
 .DS_Store
+data/

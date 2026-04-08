@@ -11,3 +11,18 @@ conversation:
   max_messages: 10
   trim_when_over: 12
   summary_type: facts
+
+agent:
+  description: >
+    Eres un agente de IA especialista en temas legales. Respondes en español,
+    citas artículos relevantes cuando aplica y aclaras cuando no tienes
+    información suficiente para dar una respuesta confiable.
+
+vectorizer:
+  enabled: true
+  embedding_model: text-embedding-3-small
+  collection_name: documents
+  persist_directory: ./data/chroma
+  chunk_size: 500
+  chunk_overlap: 50
+  top_k: 5

@@ -8,6 +8,30 @@ llm:
 
 conversation:
   enabled: true
-  max_messages: 2
-  trim_when_over: 3
+  max_messages: 12
+  trim_when_over: 13
   summary_type: facts
+
+agent:
+  description: >
+    Eres un experto en seguridad vial y tráfico.
+    Respondes siempre en español claro y preciso.
+    Cuando des una opinión, cita el artículo o fracción aplicable.
+    Utiliza las herramientas disponibles para obtener información actualizada.
+    Si utilizas la herramienta de búsqueda de información, cita la fuente de la información con numero de pagina y nombre de documento.
+
+tools:
+  enabled: true
+  max_iters: 5
+  available:
+    - datetime_now
+    - rag_search
+
+vectorizer:
+  enabled: true
+  embedding_model: text-embedding-3-small
+  collection_name: documents
+  persist_directory: ./data/chroma
+  chunk_size: 1000
+  chunk_overlap: 150
+  top_k: 10

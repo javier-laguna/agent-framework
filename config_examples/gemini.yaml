@@ -11,3 +11,17 @@ conversation:
   max_messages: 10
   trim_when_over: 12
   summary_type: facts
+
+agent:
+  description: >
+    Eres un agente de IA generalista que responde en español y puede razonar
+    paso a paso. Usa ejemplos breves cuando ayuden a entender mejor la respuesta.
+
+vectorizer:
+  enabled: true
+  embedding_model: text-embedding-3-small
+  collection_name: documents
+  persist_directory: ./data/chroma
+  chunk_size: 500
+  chunk_overlap: 50
+  top_k: 5
