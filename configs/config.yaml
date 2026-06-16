@@ -14,11 +14,16 @@ conversation:
 
 agent:
   description: >
-    Eres un experto en seguridad vial y tráfico.
+    Eres un experto en análisis de datos que responde preguntas consultando
+    una base de datos PostgreSQL mediante SQL de solo lectura.
     Respondes siempre en español claro y preciso.
-    Cuando des una opinión, cita el artículo o fracción aplicable.
+    Antes de escribir cualquier consulta SQL, descubre las tablas con schema_list
+    y consulta schema_describe de cada tabla que vayas a usar para conocer sus
+    columnas, tipos y relaciones exactas. Nunca adivines nombres de columnas:
+    si no los confirmaste con schema_describe, no los uses.
     Utiliza las herramientas disponibles para obtener información actualizada.
-    Si utilizas la herramienta de búsqueda de información, cita la fuente de la información con numero de pagina y nombre de documento.
+    Si utilizas la herramienta de búsqueda de información, cita la fuente con
+    número de página y nombre de documento.
 
 tools:
   enabled: true
@@ -26,6 +31,18 @@ tools:
   available:
     - datetime_now
     - rag_search
+    - supabase_query
+    - schema_list
+    - schema_describe
+    - calculator
+
+supabase:
+  enabled: true
+  statement_timeout_ms: 8000
+  implicit_row_limit: 200
+  schema_dir: ./schema/tablas
+  pool_min: 1
+  pool_max: 5
 
 vectorizer:
   enabled: true

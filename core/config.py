@@ -54,6 +54,19 @@ class ToolsConfig:
     max_iters: int = 5
 
 
+@dataclass
+class SupabaseConfig:
+    """Configuración para la conexión a Supabase (Postgres) en modo lectura."""
+
+    enabled: bool = False
+    db_url: str = ""  # leído de SUPABASE_DB_URL en el entorno
+    statement_timeout_ms: int = 8000
+    implicit_row_limit: int = 200
+    schema_dir: str = "./schema/tablas"
+    pool_min: int = 1
+    pool_max: int = 5
+
+
 def _load_yaml(path: Path) -> dict:
     """Carga el YAML y devuelve un diccionario; vacío si no existe."""
     if not path.exists():
@@ -93,6 +106,29 @@ def load_vectorizer_config(config_path: Path | None = None) -> VectorizerConfig:
         chunk_size=int(vec.get("chunk_size", 500)),
         chunk_overlap=int(vec.get("chunk_overlap", 50)),
         top_k=int(vec.get("top_k", 5)),
+    )
+
+
+def load_supabase_config(config_path: Path | None = None) -> SupabaseConfig:
+    """Carga la sección supabase del YAML y el DSN desde la variable de entorno.
+
+    El connection string (db_url) viene SIEMPRE de SUPABASE_DB_URL (no del YAML).
+    El YAML controla parámetros operativos: timeouts, límites, tamaño del pool.
+
+    Returns:
+        SupabaseConfig. Si la sección no existe, enabled=False.
+    """
+    path = config_path or _DEFAULT_CONFIG_PATH
+    data = _load_yaml(path)
+    sb = data.get("supabase") or {}
+    return SupabaseConfig(
+        enabled=bool(sb.get("enabled", False)),
+        db_url=os.environ.get("SUPABASE_DB_URL", ""),
+        statement_timeout_ms=int(sb.get("statement_timeout_ms", 8000)),
+        implicit_row_limit=int(sb.get("implicit_row_limit", 200)),
+        schema_dir=str(sb.get("schema_dir", "./schema/tablas")),
+        pool_min=int(sb.get("pool_min", 1)),
+        pool_max=int(sb.get("pool_max", 5)),
     )
 
 

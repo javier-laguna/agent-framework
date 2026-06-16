@@ -1,5 +1,6 @@
 .env
-docs/
+docs/*
+!docs/agregar_tools.md
 rag_docs/
 .venv/
 __pycache__/
@@ -9,4 +10,7 @@ __pycache__/
 .DS_Store
 data/
 CLAUDE.md
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/agregar-tool/

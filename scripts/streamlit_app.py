@@ -22,6 +22,7 @@ from core.config import (
     load_agent_description,
     load_config,
     load_conversation_config,
+    load_supabase_config,
     load_vectorizer_config,
 )
 from core.wrapper import DSPyWrapper
@@ -43,6 +44,68 @@ def get_vector_adapter():
         return None, vec_config
     adapter = ChromaAdapter(vec_config)
     return adapter, vec_config
+
+
+def _render_db_queries(queries: list[dict]) -> None:
+    """Muestra las consultas que el agente ejecutó contra Supabase."""
+    if not queries:
+        return
+    import pandas as pd
+
+    st.divider()
+    st.subheader(f"Consultas a Supabase ({len(queries)})")
+    for i, q in enumerate(queries, 1):
+        if q.get("error"):
+            label = f"Query #{i} — ERROR"
+        else:
+            label = f"Query #{i} — {q['row_count']} fila(s) en {q['elapsed_ms']:.0f} ms"
+            if q.get("truncated"):
+                label += " (truncada)"
+        with st.expander(label, expanded=(i == 1 and len(queries) == 1)):
+            sql_to_show = q.get("sql_original") or q.get("sql_executed") or ""
+            if sql_to_show:
+                st.code(sql_to_show, language="sql")
+            if q.get("sql_executed") and q.get("sql_executed") != q.get("sql_original"):
+                st.caption("SQL ejecutado tras aplicar LIMIT implícito:")
+                st.code(q["sql_executed"], language="sql")
+            if q.get("error"):
+                st.error(q["error"])
+                continue
+            if q["rows"] and q["columns"]:
+                df = pd.DataFrame(q["rows"], columns=q["columns"])
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            elif q["columns"]:
+                st.caption("La consulta no devolvió filas.")
+
+
+def _render_trajectory(steps: list[dict]) -> None:
+    """Muestra el razonamiento del agente: pensamientos y uso de herramientas."""
+    if not steps:
+        return
+
+    st.divider()
+    st.subheader(f"Razonamiento y herramientas ({len(steps)} paso(s))")
+    for i, step in enumerate(steps, 1):
+        tool = step.get("tool_name") or ""
+        thought = step.get("thought") or ""
+        if tool and tool != "finish":
+            label = f"Paso {i} — 🔧 {tool}"
+        elif tool == "finish":
+            label = f"Paso {i} — ✓ respuesta final"
+        else:
+            label = f"Paso {i}"
+        with st.expander(label, expanded=False):
+            if thought:
+                st.markdown(f"**Idea:** {thought}")
+            if tool:
+                st.caption(f"Herramienta: `{tool}`")
+                args = step.get("tool_args")
+                if args:
+                    st.json(args)
+            observation = step.get("observation")
+            if observation not in (None, "", {}):
+                st.caption("Resultado:")
+                st.code(str(observation), language="text")
 
 
 def tab_agente(config, conv_config, agent_description, api_key_ok, debug):
@@ -101,17 +164,34 @@ def tab_agente(config, conv_config, agent_description, api_key_ok, debug):
         if not api_key_ok:
             st.error("Configura OPENAI_API_KEY o GEMINI_API_KEY en el entorno o en un archivo .env.")
             return
-        with st.spinner("Generando respuesta..."):
+        try:
+            from tools.supabase_query import clear_last_queries, get_last_queries
+            clear_last_queries()
+        except ImportError:
+            get_last_queries = lambda: []  # noqa: E731
+
+        with st.status("Pensando...", expanded=False) as status:
             try:
                 if debug:
                     st.sidebar.caption("Llamando a wrapper.respond()...")
                 respuesta = wrapper.respond(mensaje.strip())
                 st.session_state.last_response = respuesta
+                st.session_state.last_db_queries = get_last_queries()
+                st.session_state.last_trajectory = wrapper.get_last_trajectory()
                 st.session_state.clear_input_next = True
+                n_queries = len(st.session_state.last_db_queries)
+                if n_queries:
+                    status.update(
+                        label=f"Respuesta lista — {n_queries} consulta(s) a Supabase",
+                        state="complete",
+                    )
+                else:
+                    status.update(label="Respuesta lista", state="complete")
                 if debug:
                     st.sidebar.caption("Respond OK.")
                 st.rerun()
             except Exception as e:
+                status.update(label="Error", state="error")
                 st.error(f"Error: {e}")
                 st.code(traceback.format_exc(), language="text")
 
@@ -119,6 +199,8 @@ def tab_agente(config, conv_config, agent_description, api_key_ok, debug):
         st.divider()
         st.subheader("Respuesta")
         st.write(st.session_state.last_response)
+        _render_trajectory(st.session_state.get("last_trajectory", []))
+        _render_db_queries(st.session_state.get("last_db_queries", []))
 
 
 def _get_docs_dir() -> Path:
@@ -317,11 +399,83 @@ def tab_rag(debug):
                     st.json(meta)
 
 
+def tab_schema_bd(debug: bool) -> None:
+    """Pestaña: explorador de la documentación de schema que ve el LLM."""
+    from pathlib import Path
+
+    st.header("Schema BD")
+    sb_config = load_supabase_config()
+
+    if not sb_config.enabled:
+        st.warning("La integración con Supabase no está habilitada en `configs/config.yaml` (`supabase.enabled: false`).")
+        return
+
+    schema_dir = Path(sb_config.schema_dir).resolve()
+    if not schema_dir.exists():
+        st.info(
+            f"El directorio `{schema_dir}` aún no existe.\n\n"
+            "Ejecuta en una terminal:\n\n"
+            "```bash\nPYTHONPATH=. python scripts/generate_schema_docs.py\n```"
+        )
+        return
+
+    md_files = sorted(schema_dir.glob("*.md"))
+
+    col_info, col_actions = st.columns([3, 1])
+    with col_info:
+        st.caption(f"Directorio: `{schema_dir}`")
+        st.metric("Tablas documentadas", len(md_files))
+    with col_actions:
+        if st.button("Verificar conexión a BD"):
+            with st.spinner("Conectando..."):
+                try:
+                    from adapters.database.supabase import SupabaseAdapter
+
+                    adapter = SupabaseAdapter(sb_config)
+                    tablas_bd = adapter.list_tables()
+                    adapter.close()
+                    tablas_md = {f.stem for f in md_files}
+                    tablas_set = set(tablas_bd)
+                    solo_bd = sorted(tablas_set - tablas_md)
+                    solo_md = sorted(tablas_md - tablas_set)
+                    st.success(f"Conexión OK. {len(tablas_bd)} tabla(s) en BD, {len(md_files)} documentada(s).")
+                    if solo_bd:
+                        st.warning(f"Sin documentar ({len(solo_bd)}): {', '.join(solo_bd[:20])}{'...' if len(solo_bd) > 20 else ''}")
+                    if solo_md:
+                        st.info(f"Documentadas pero no en BD ({len(solo_md)}): {', '.join(solo_md[:20])}{'...' if len(solo_md) > 20 else ''}")
+                except Exception as exc:
+                    st.error(f"Error al conectar: {exc}")
+                    if debug:
+                        st.code(traceback.format_exc(), language="text")
+
+    st.divider()
+
+    if not md_files:
+        st.info(
+            "Aún no hay tablas documentadas. Ejecuta:\n\n"
+            "```bash\nPYTHONPATH=. python scripts/generate_schema_docs.py\n```"
+        )
+        return
+
+    nombres = [f.stem for f in md_files]
+    seleccionada = st.selectbox("Tabla", nombres, key="schema_table_select")
+    if seleccionada:
+        target = schema_dir / f"{seleccionada}.md"
+        try:
+            contenido = target.read_text(encoding="utf-8")
+        except OSError as exc:
+            st.error(f"No se pudo leer {target}: {exc}")
+            return
+        st.markdown(contenido)
+
+
 def main() -> None:
     st.set_page_config(page_title="Framework DSPy", page_icon=None, layout="wide")
 
     if "mensaje_draft" not in st.session_state:
         st.session_state.mensaje_draft = ""
+    if "last_db_queries" not in st.session_state:
+        st.session_state.last_db_queries = []
     if st.session_state.get("clear_input_next"):
         st.session_state.mensaje_draft = ""
         st.session_state.clear_input_next = False
@@ -338,13 +492,16 @@ def main() -> None:
     if debug:
         st.sidebar.caption("Estado: config cargada")
 
-    tab_agent, tab_docs = st.tabs(["Agente", "RAG - Documentos"])
+    tab_agent, tab_docs, tab_schema = st.tabs(["Agente", "RAG - Documentos", "Schema BD"])
 
     with tab_agent:
         tab_agente(config, conv_config, agent_description, api_key_ok, debug)
 
     with tab_docs:
         tab_rag(debug)
+
+    with tab_schema:
+        tab_schema_bd(debug)
 
 
 if __name__ == "__main__":

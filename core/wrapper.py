@@ -68,6 +68,8 @@ class DSPyWrapper:
         sig_str = "context, question -> answer" if has_context else "question -> answer"
         self._predict = self._make_main_module(sig_str)
 
+        self._last_trajectory = None
+
     def _load_tools(self, names: list[str]) -> list:
         """Importa los módulos de tools para que se registren y devuelve las funciones."""
         import importlib
@@ -119,10 +121,12 @@ class DSPyWrapper:
         """
         if self._memory is None:
             pred = self._predict(question=texto)
+            self._last_trajectory = getattr(pred, "trajectory", None)
             return getattr(pred, "answer", "")
 
         context = self._memory.get_context()
         pred = self._predict(context=context or "(sin contexto previo)", question=texto)
+        self._last_trajectory = getattr(pred, "trajectory", None)
         answer = getattr(pred, "answer", "")
         self._memory.add_turn(texto, answer)
         self._memory.trim_and_summarize(self._summarize_chunk)
@@ -139,6 +143,35 @@ class DSPyWrapper:
     def get_tool_names(self) -> list[str]:
         """Devuelve los nombres de las tools activas."""
         return [fn.__name__ for fn in self._tools]
+
+    def get_last_trajectory(self) -> list[dict]:
+        """Devuelve los pasos del último ReAct: pensamiento, tool, args y observación.
+
+        DSPy guarda la trayectoria como un dict con claves `thought_N`,
+        `tool_name_N`, `tool_args_N`, `observation_N`. La reorganiza en una
+        lista ordenada de pasos para mostrarla en la UI. Vacía si no hubo tools.
+        """
+        traj = self._last_trajectory
+        if not isinstance(traj, dict):
+            return []
+
+        indices = set()
+        for key in traj:
+            _, _, idx = key.rpartition("_")
+            if idx.isdigit():
+                indices.add(int(idx))
+
+        steps = []
+        for i in sorted(indices):
+            steps.append(
+                {
+                    "thought": traj.get(f"thought_{i}", ""),
+                    "tool_name": traj.get(f"tool_name_{i}", ""),
+                    "tool_args": traj.get(f"tool_args_{i}", {}),
+                    "observation": traj.get(f"observation_{i}", ""),
+                }
+            )
+        return steps
 
     def get_conversation_messages(self) -> list[dict[str, str]]:
         """Mensajes recientes para mostrar en UI (vacío si no hay memoria)."""

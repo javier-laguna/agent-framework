@@ -9,6 +9,9 @@ streamlit = "*"
 chromadb = "*"
 pypdf = "*"
 python-docx = "*"
+"psycopg[binary]" = "*"
+psycopg-pool = "*"
+sqlparse = "*"
 
 [requires]
 python_version = "3.10"
